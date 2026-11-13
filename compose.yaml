@@ -1,0 +1,17 @@
+services:
+  hub:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    env_file: .env
+    environment:
+      DATABASE_URL: file:/app/data/hub.db
+      ASSET_DIR: /app/data/assets
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - hub-data:/app/data
+    restart: unless-stopped
+volumes:
+  hub-data:

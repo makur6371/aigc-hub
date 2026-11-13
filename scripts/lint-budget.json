@@ -1,0 +1,14 @@
+{
+  "src/components/admin/SurveysAdminPanel.tsx :: react-hooks/set-state-in-effect": 1,
+  "src/components/canvas/FaceDoodleWorkbench.tsx :: react-hooks/set-state-in-effect": 1,
+  "src/components/canvas/MediaPreviewModals.tsx :: react-hooks/set-state-in-effect": 1,
+  "src/components/layout/AnnouncementBell.tsx :: react-hooks/set-state-in-effect": 1,
+  "src/components/tools/AgentPrefsDrawer.tsx :: react-hooks/set-state-in-effect": 1,
+  "src/components/tools/ToolAgentPanel.tsx :: react-hooks/set-state-in-effect": 1,
+  "src/components/tools/ToolStudio.tsx :: react-hooks/set-state-in-effect": 3,
+  "src/components/ui/FirstUseGuide.tsx :: react-hooks/set-state-in-effect": 1,
+  "src/components/ui/ImageLightbox.tsx :: react-hooks/set-state-in-effect": 1,
+  "src/components/user/TeamContent.tsx :: react-hooks/set-state-in-effect": 1,
+  "src/components/user/TeamSpendingPanel.tsx :: react-hooks/set-state-in-effect": 1,
+  "src/components/user/UserSurveyFlow.tsx :: react-hooks/set-state-in-effect": 1
+}

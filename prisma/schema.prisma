@@ -1,0 +1,1300 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  NORMAL
+  FROZEN
+}
+
+enum SecurityLevel {
+  LOW
+  HIGH
+}
+
+enum BillingType {
+  POINTS
+  SUBSCRIPTION
+}
+
+enum PointsLogType {
+  RECHARGE
+  DEDUCTION
+  SUBSCRIPTION
+  ADMIN_ADJUST
+  BONUS
+}
+
+enum CardKeyType {
+  POINTS_PACKAGE
+  SUBSCRIPTION
+  BEANS_PACKAGE
+}
+
+enum CardKeyStatus {
+  UNUSED
+  USED
+  EXPIRED
+}
+
+enum ModelType {
+  TEXT
+  VISION
+  IMAGE
+  VIDEO
+  AUDIO
+}
+
+enum PricingType {
+  PER_TOKEN
+  PER_CALL
+}
+
+model User {
+  id                      String        @id @default(cuid())
+  phone                   String?       @unique
+  email                   String?       @unique
+  nickname                String?
+  passwordHash            String
+  /**
+   * 会话版本号（台账 Q-506）：JWT 是无状态的，签发后 7 天内内容不变 ——
+   * 于是「改密码 / 管理员重置密码」都**踢不掉已泄露的旧会话**（冻结与撤权已由
+   * proxy 实时查库堵住，凭据变更这一刀原本没有）。
+   * 登录时把当前值签进 token（`tv`），proxy 每次已做的账号查询里顺带比对：
+   * 不一致即视为旧 token 作废。改密码 / 重置密码时 +1。
+   * 默认 0：历史 token 没有 `tv`，按 0 处理，加列不会把在线用户集体踢下线。
+   */
+  tokenVersion            Int           @default(0) @map("token_version")
+  role                    UserRole      @default(USER)
+  status                  UserStatus    @default(NORMAL)
+  securityLevel           SecurityLevel @default(LOW)
+  emailVerified           Boolean       @default(false) @map("email_verified")
+  adminVerified           Boolean       @default(false) @map("admin_verified")
+  /// 自助安全验证通过时间（微信 + 手机号 + 密码 + 昵称齐全）。
+  /// 与 securityLevel 不同：HIGH 只代表可解锁功能，本字段才是一次性安全验证奖励与活动资格的凭证。
+  securityVerifiedAt      DateTime?     @map("security_verified_at")
+  socialUid               String?       @unique @map("social_uid")
+  socialProvider          String?       @map("social_provider") // wx
+  avatarUrl               String?       @map("avatar_url")
+  points                  Float         @default(0)
+  beans                   Float         @default(0) // 豆：视频生成专用额度
+  billingType             BillingType   @default(POINTS)
+  // ===== 企业团队计费（共享余额池）=====
+  // billingOwnerId：这个账号的消费由谁的钱包出。
+  //   null（默认）= 自付，扣自己的 points/beans —— 存量用户与所有新注册用户行为完全不变。
+  //   指向另一个 userId = 团队成员，消费从该账号（老板/企业）的余额扣。
+  // 为什么用「自引用 + 默认 null」而不是新建组织表做主键：
+  //   1) 零迁移风险：null 即旧行为，不需要给存量用户回填任何数据；
+  //   2) 扣费仍是对单行做条件 UPDATE（防并发超额的那套裸 SQL 语义不变），
+  //      只是把 id 从「自己」换成「出资人」—— 不引入跨行事务、不破坏原子性；
+  //   3) opt-in：不加入团队就永远不会走到新分支。
+  billingOwnerId          String?       @map("billing_owner_id")
+  // 团队成员的每日积分上限（null = 用团队默认值；0 = 不限）。
+  // 为什么必须要：共享池意味着一个成员能把整池烧光。没有上限，
+  // 「老板充值、员工使用」就是一个随时会炸的信任问题（一次误跑烧掉本月预算且追不回）。
+  teamDailyLimit          Float?        @map("team_daily_limit")
+  // 成员单独的**豆**日额度（null = 用团队默认值；0 = 不限）。
+  // 为什么必须有：豆比积分贵得多（视频专用，单条可达 300 豆），恰恰最需要按人管控。
+  // 此前只有积分额度能单独设 —— 一半能力缺失。
+  teamDailyBeans          Float?        @map("team_daily_beans")
+  // 企业主对成员的内部备注（如「设计部」「外包，月底到期」），仅团队内可见。
+  teamMemberNote          String?       @map("team_member_note")
+  // 企业主是否停用该成员：保留成员身份，但停止团队出资。
+  // 语义 = **回退自付**（不是封号）——成员用自己充的钱仍可继续，只是不再花公司的钱。
+  // 与平台级 User.status=FROZEN（完全封禁）是两件事，不要混用。
+  // 判定在 resolveBillingOwner（扣费路径），不是只拦界面。
+  teamDisabled            Boolean       @default(false) @map("team_disabled")
+  // 团队消费日累计（按 teamSpentDay 分桶，跨天自动从 0 起算，同 free-quota 做法）
+  teamSpentDay            String?       @map("team_spent_day")
+  teamSpentPoints         Float         @default(0) @map("team_spent_points")
+  teamSpentBeans          Float         @default(0) @map("team_spent_beans")
+  // 订阅期（方案A：订阅=期内一次性赠送积分；到期惰性回滚为 POINTS，已发放积分保留）
+  subscriptionExpiryAt    DateTime?     @map("subscription_expiry_at")
+  /// 指定免费模型的时长权益截止时间，与订阅有效期独立。
+  freeImageUntil          DateTime?     @map("free_image_until")
+  subscriptionActivatedAt DateTime?     @map("subscription_activated_at")
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  pointsLogs       PointsLog[]
+  beansLogs        BeansLog[]
+  cardKeys         CardKey[]
+  apiUsageLogs     ApiUsageLog[]
+  imageRecords     ImageGenerationRecord[]
+  videoRecords     VideoGenerationRecord[]
+  audioRecords     AudioGenerationRecord[]
+  agents           Agent[]
+  canvasNodes      CanvasNodeSpec[]
+  workflows        CanvasWorkflow[]
+  adminActions     AdminActionLog[]        @relation("AdminActions")
+  chatSessions     ChatSession[]
+  assets           UserAsset[]
+  prompts          PromptTemplate[]
+  generationTasks  GenerationTask[]
+  canvasRuns       CanvasRun[]
+  sharedWorks      SharedWork[]
+  tools            Tool[]
+  rechargeOrders   RechargeOrder[]
+  invitesSent      InviteRelation[]        @relation("Inviter")
+  inviteReceived   InviteRelation?         @relation("Invitee")
+  billingHolds     BillingHold[]
+  mcpPairings      McpPairing[]
+  // 出资关系（自引用）：billingOwner = 为我付费的账号；billingMembers = 我名下要付费的成员
+  billingOwner     User?                   @relation("TeamBilling", fields: [billingOwnerId], references: [id], onDelete: SetNull)
+  billingMembers   User[]                  @relation("TeamBilling")
+  ownedTeam        Team?
+  freeQuotaUsages  ModelFreeQuotaUsage[]
+  freeImageGrants  FreeImageGrant[]
+  agentPreferences AgentPreference[]
+  notifications    UserNotification[]
+  surveyResponses  SurveyResponse[]   @relation("SurveyResponses")
+
+  @@index([securityLevel])
+  @@map("users")
+}
+
+model FreeImageGrant {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  source      String
+  sourceKey   String   @map("source_key")
+  minutes     Int
+  description String
+  startsAt    DateTime @map("starts_at")
+  expiresAt   DateTime @map("expires_at")
+  /// 管理员代发时记录操作人；用户自助领取（公告/套餐/签到/邀请）为空。
+  /// 为什么单独存：没有它，后台只能看到「管理员赠送」，无法追责到具体是谁操作的。
+  operatorId  String?  @map("operator_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, source, sourceKey])
+  @@index([userId, createdAt])
+  @@index([operatorId])
+  @@map("free_image_grants")
+}
+
+// 生图时长券策略（单例，id 固定 primary）。
+//
+// 时长券本身解决的是「有效期」，本表解决「有效期内最多白送多少张」——
+// 没有上限时，一张 10 天券可以把指定免费模型打到任意次数，上游成本不可控。
+// 两个上限都为 0 = 沿用旧行为（不限次），改配置才生效，不留迁移风险。
+model FreeImagePassPolicy {
+  id                 String   @id @default("primary")
+  enabled            Boolean  @default(true)
+  /// 每用户每天最多通过时长券免费生成多少张；0 = 不限
+  dailyUserLimit     Int      @default(0) @map("daily_user_limit")
+  /// 全平台每天最多通过时长券免费生成多少张；0 = 不限
+  dailyPlatformLimit Int      @default(0) @map("daily_platform_limit")
+  modelIds           Json?    @map("model_ids")
+  updatedAt          DateTime @updatedAt
+
+  @@map("free_image_pass_policies")
+}
+
+// 时长券实际使用台账：每免费生成一张写一行。
+//
+// 为什么不能只靠 points_log：时长券和每日免费额度都写 0 扣费，事后无法区分
+// 「券用的」还是「额度用的」。这张表是后台统计/限额的唯一依据。
+model FreeImagePassUsage {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  modelId   String   @map("model_id")
+  day       String
+  source    String?
+  runId     String?  @map("run_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, day])
+  @@index([modelId, day])
+  @@index([createdAt])
+  @@map("free_image_pass_usages")
+}
+
+// ===== 站内通知（1 对 1 消息，非全局公告）=====
+// 与 SystemAnnouncement 的区别（为什么不是一张表）：
+//   - SystemAnnouncement = 广播给所有人，读状态只能存在**客户端**（localStorage），
+//     因为它没有「收件人」这一行，服务端无从记录谁读过。
+//   - UserNotification   = 发给某个用户的消息（审核结果 / 加退团队 / 充值到账），
+//     必须服务端存 readAt：这是 1 对 1 消息，换台设备登录也该是「已读」，
+//     用 localStorage 会出现「这台已读、那台还红点」的自相矛盾。
+// 两者共用同一个铃铛入口（见 NoticeBell），但读状态模型不同，故分表。
+model UserNotification {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      String    // team_review / team_member / billing / system
+  title     String
+  content   String
+  link      String?   // 点击跳转的站内路径（如 /user/profile）
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 未读红点 / 列表查询都走「我的 + 时间倒序」
+  @@index([userId, createdAt])
+  @@map("user_notifications")
+}
+
+// Agent 全局偏好（每用户一条）：生图/视频/音频模型 + 画面比例/K值/质量
+model AgentPreference {
+  id           String   @id @default(cuid())
+  userId       String   @unique @map("user_id")
+  imageModelId String?  @map("image_model_id")
+  videoModelId String?  @map("video_model_id")
+  audioModelId String?  @map("audio_model_id")
+  imageRatio   String?  @map("image_ratio") // 1:1 / 3:4 / 16:9 等
+  imageTier    String?  @map("image_tier") // 1K / 2K / 4K
+  imageQuality String?  @map("image_quality") // low / medium / high
+  /**
+   * 视频偏好（2026-10-26 新增）—— 与上面三个图片偏好同构：
+   * 先选模型，再由该模型 `metadata.video.constraints` 决定可选的比例/分辨率/时长。
+   *
+   * 为什么不在偏好里存 width/height：像素是「比例 + 分辨率档」的推导结果，
+   * 存像素会让三份数据（比例/档位/像素）互相打架。与工具面板同一口径：
+   * 面板只存 ratio + resolution + duration，像素在提交时换算。
+   */
+  videoRatio      String? @map("video_ratio") // 16:9 / 9:16 / 1:1 ...
+  videoResolution String? @map("video_resolution") // 480P / 768P / 1080P ...
+  /** 时长（秒）。整数；模型可能只支持固定档（metadata.video.constraints.durations） */
+  videoDuration   Int?    @map("video_duration")
+  // 用户手填的长期记忆 / 自我描述（纯文本，全局生效）。
+  // 与上面几列（技术参数：用哪个模型、什么比例）是两类东西 —— 这列存的是
+  // 「关于这个人」的知识（做什么业务、卖什么、偏好什么风格/语气），
+  // 每轮注入 Agent 上下文，让它不用每次重新问一遍。
+  // 纯手填、不做自动总结：自动记忆要额外 LLM 调用（小机器不划算），
+  // 且会写错/越攒越脏，还得管去重清理。手填可控、零成本。
+  memoryText   String?  @map("memory_text")
+  /**
+   * 执行权限：auto = 全自动（规划完直接执行，现状）；confirm = 执行前确认。
+   *
+   * 为什么是**用户级偏好**而不是每次对话传参：这是「我信不信任它自动花钱」的
+   * 长期倾向，不该每轮重选（和 imageTier 同理）。默认 auto = 存量用户行为不变。
+   */
+  executeMode  String   @default("auto") @map("execute_mode")
+  updatedAt    DateTime @updatedAt
+
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageModel ModelConfig? @relation("AgentPrefImage", fields: [imageModelId], references: [id], onDelete: SetNull)
+  videoModel ModelConfig? @relation("AgentPrefVideo", fields: [videoModelId], references: [id], onDelete: SetNull)
+  audioModel ModelConfig? @relation("AgentPrefAudio", fields: [audioModelId], references: [id], onDelete: SetNull)
+
+  @@map("agent_preferences")
+}
+
+// ===== 提示词来源（可拉取的远程提示词源）=====
+//
+// 为什么单独建表：此前「从 VOZEB 拉种子」是一条硬编码的脚本/接口，
+// 拉完的提示词和用户自建混在同一张表里，无法回答「这条来自哪个源、
+// 要不要重新拉、上次成功没有」。多源后必须把「源」变成一等实体。
+//
+// 设计对齐 basketikun/infinite-canvas 的 prompt source：
+//   - 源 = { name, url, homepage, enabled, builtIn, cacheCover }
+//   - URL 指向「标准 JSON 数组」，任何符合条件的源都走同一个归一化器
+//   - 拉取失败保留上次成功缓存，不清空已有提示词（见 pull 逻辑）
+model PromptSource {
+  id           String    @id @default(cuid())
+  name         String
+  url          String // 标准 JSON 数组地址（可填镜像，如 ghproxy 前缀）
+  homepage     String? // 原项目地址，仅用于后台回链展示
+  enabled      Boolean   @default(true)
+  builtIn      Boolean   @default(false)
+  // 是否允许卡片封面走 /api/cover 代理展示。默认开；GitHub 系封面在国内
+  // 拉不动时可在后台关掉，卡片退化为纯文本，避免一排裂图。
+  cacheCover   Boolean   @default(true)
+  // 拉取状态（失败保留上次成功计数，便于「失败但仍有缓存可用」）
+  lastStatus   String? // null=未拉过 / SUCCESS / FAILED
+  lastError    String?
+  lastCount    Int? // 上次成功拉到的条数
+  lastPulledAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  prompts PromptTemplate[]
+
+  @@index([enabled])
+  @@map("prompt_sources")
+}
+
+// ===== P3: 提示词库 =====
+model PromptTemplate {
+  id         String   @id @default(cuid())
+  title      String
+  content    String
+  category   String   @default("通用")
+  kind       String   @default("creative") // creative=创作型成品提示词（有成品图）/ functional=功能型模板提示词（可套用）
+  coverUrl   String? // 种子图远程 URL（不落盘），供作品广场/提示词卡展示
+  isPublic   Boolean  @default(false)
+  status     String   @default("APPROVED") // PENDING / APPROVED / REJECTED；用户公开提交默认 PENDING，种子和存量默认 APPROVED
+  isOfficial Boolean  @default(false) // 官方提示词标识
+  useCount   Int      @default(0)
+  creatorId  String?
+  embedding  String? // 语义检索向量(JSON 数组)，供 Copilot 检索相似提示词
+  // 来源追踪：来自远程源的提示词带上 sourceId + externalId，
+  // 去重/更新用 (sourceId, externalId) 唯一键，而不是脆弱的 title+content 前缀比对。
+  sourceId   String?
+  externalId String? // 源内的稳定 ID
+  sourceUrl  String? // 原始条目回链（如 X 帖子）
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  creator User?         @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  source  PromptSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([sourceId, externalId])
+  @@index([isPublic, category])
+  @@index([creatorId])
+  @@index([kind])
+  @@index([status])
+  @@index([sourceId])
+  @@map("prompt_templates")
+}
+
+// ===== P2: 用户素材库 =====
+model UserAsset {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String // image / video / audio / file
+  url       String // 落盘相对路径或远程 URL（不存 base64）
+  fileName  String?
+  mime      String?
+  size      Int?
+  source    String    @default("upload") // upload / generated / workflow / rehost / tool-drag / workbench
+  // 过期时间：null=永久保留；非 null 时由清理任务删除（磁盘文件 + 本记录）。
+  // 上游转存图 2 小时、工具面板上传 7 天，避免素材无限堆积把磁盘占满。
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@map("user_assets")
+}
+
+// ===== P1: 聊天会话持久化 =====
+model ChatSession {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String   @default("新对话")
+  modelId   String?
+  summary   String? // B10: 会话滚动摘要（长会话上下文压缩）
+  status    String   @default("ACTIVE") // ACTIVE / ARCHIVED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([userId, updatedAt])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  sessionId String
+  role      String // user / assistant / system
+  content   String
+  reasoning String?
+  mediaType String? // null / image / video / audio
+  mediaUrls String? // JSON array
+  meta      String? // JSON: { modelId, modelName, cost, taskId, prompt, params }
+  status    String   @default("DONE") // STREAMING / DONE / FAILED
+  seq       Int      @default(0)
+  createdAt DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, seq])
+  @@map("chat_messages")
+}
+
+// ===== P6: 画布任务级控制 =====
+model CanvasRun {
+  id              String   @id @default(cuid())
+  userId          String
+  workflowName    String   @default("未命名工作流")
+  nodes           Json
+  connections     Json
+  seedOutputs     Json?
+  executedNodeIds Json?
+  status          String   @default("RUNNING") // PENDING/RUNNING/PAUSED/SUCCEEDED/FAILED/CANCELLED
+  error           String?
+  costPoints      Float    @default(0)
+  costBeans       Float    @default(0)
+  /**
+   * 执行入口来源：canvas（无限画布） / tool（工具箱） / batch（成果区批量操作） / mcp / agent。
+   * 用于「同一用户的哪些任务是同一个入口派发的」——工具箱页面靠它认领自己的历史任务。
+   */
+  surface         String   @default("canvas")
+  /**
+   * 入口内的具体对象：工具箱填 tool.id，画布填工作流 id。配合 surface 精确定位。
+   */
+  surfaceId       String?
+  /**
+   * 本次的「成果节点」id 列表。
+   * 只有这些节点的产出才算最终成果（上传/裁切等透传节点的输出不算），
+   * 页面刷新后据此从 seedOutputs 里提取图片回填成果区。
+   */
+  resultNodeIds   Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt])
+  @@index([userId, surface, surfaceId, updatedAt])
+  @@map("canvas_runs")
+}
+
+// ===== P5: 统一创作 Agent 任务 =====
+model GenerationTask {
+  id              String   @id @default(cuid())
+  userId          String
+  taskType        String   @default("agent") // agent / canvas / video / image
+  surface         String   @default("chat") // chat / canvas
+  sessionId       String?
+  clientRequestId String?
+  status          String   @default("PENDING") // PENDING/RUNNING/SUCCEEDED/FAILED/CANCELLED/PAUSED
+  payload         Json? // 计划 + 子任务数组
+  result          Json?
+  error           String?
+  costPoints      Float    @default(0)
+  costBeans       Float    @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clientRequestId])
+  @@index([userId, updatedAt])
+  @@map("generation_tasks")
+}
+
+model TaskEvent {
+  id        Int      @id @default(autoincrement())
+  taskId    String
+  eventType String
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([taskId, id])
+  @@map("task_events")
+}
+
+model PointsLog {
+  id             String        @id @default(cuid())
+  userId         String
+  amount         Float
+  type           PointsLogType
+  description    String?
+  // 记账来源标签（防止账目分叉把同一笔消费重复计入）：
+  // null=真实扣款/退款（wallet 扣减余额）；'canvas-node'=画布节点内部记账（预扣预算池，不动余额）
+  category       String?
+  // 这笔钱**从谁的钱包出的**（企业团队共享池）。
+  // null = 自付（与历史数据一致）；非 null = 从该账号的余额扣。
+  // 注意 userId 语义不变（谁花掉的），billingOwnerId 只回答「谁出的钱」——
+  // 这样「老板看团队消费」= where billingOwnerId=老板，而所有现有查询一行都不用改。
+  billingOwnerId String?       @map("billing_owner_id")
+  createdAt      DateTime      @default(now())
+  /**
+   * 所属执行任务（CanvasRun.id）：把生成记录挂到具体某次运行，刷新后可据此恢复
+   */
+  runId          String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([runId])
+  // 团队消费报表按「出资人 + 时间」查（老板看自己团队的流水），缺这个索引会全表扫
+  @@index([billingOwnerId, createdAt])
+  @@map("points_logs")
+}
+
+// ===== 支付：充值套餐 + 充值订单 =====
+// 充值套餐（管理员后台维护）
+model RechargePackage {
+  id             String   @id @default(cuid())
+  name           String
+  priceCents     Int // 价格：分（¥6 → 600）
+  points         Float    @default(0) // 赠送积分数
+  beans          Float    @default(0) // 赠送豆数（视频额度）
+  // 订阅套餐（方案A：激活后一次性发放 points/beans，期内不重复发）
+  isSubscription Boolean  @default(false) @map("is_subscription")
+  // 套餐类型（前端分组展示用）：points=积分包 / beans=豆包 / subscription=订阅包
+  kind           String   @default("points") // points / beans / subscription
+  durationDays   Int? // 订阅时长（天）；普通套餐为 null
+  /// 订阅套餐赠送的「免费无限生图」天数（3/5/10）；普通套餐为 null
+  freeImageDays  Int? @map("free_image_days")
+  sortOrder      Int      @default(0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  orders RechargeOrder[]
+
+  @@map("recharge_packages")
+}
+
+// 充值订单（金额一律存整数分，签名比对用 toFixed(2) 字符串）
+model RechargeOrder {
+  id             String    @id @default(cuid())
+  orderNo        String    @unique // out_trade_no
+  userId         String
+  packageId      String?
+  name           String // 套餐名快照
+  priceCents     Int // 金额快照（分）
+  points         Float // 积分快照
+  beans          Float // 豆快照
+  status         String    @default("PENDING") // PENDING / PAID / CLOSED
+  // 订阅订单快照（支付成功后按此激活订阅并一次性发放积分）
+  isSubscription Boolean   @default(false) @map("is_subscription")
+  durationDays   Int?
+  /// 下单时的免费无限生图天数快照（套餐后续改价/改权益不影响已下单订单）
+  freeImageDays  Int?      @map("free_image_days")
+  tradeNo        String? // 易支付订单号
+  paidAt         DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package RechargePackage? @relation(fields: [packageId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@map("recharge_orders")
+}
+
+// 豆流水：视频生成专用额度（与积分完全隔离，不支持兑换）
+model BeansLog {
+  id             String   @id @default(cuid())
+  userId         String
+  amount         Float
+  type           String // RECHARGE / DEDUCTION / ADMIN_ADJUST / BONUS
+  description    String?
+  // 记账来源标签：null=真实扣款/退款；'canvas-node'=画布节点内部记账（预扣预算池，不动余额）
+  category       String?
+  // 同 PointsLog.billingOwnerId：这笔豆从谁的钱包出的（null=自付）
+  billingOwnerId String?  @map("billing_owner_id")
+  createdAt      DateTime @default(now())
+  /**
+   * 所属执行任务（CanvasRun.id）：豆流水与任务/调用记录串联，便于按任务对账
+   */
+  runId          String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([runId])
+  // 同 PointsLog：团队豆消费报表按「出资人 + 时间」查
+  @@index([billingOwnerId, createdAt])
+  @@map("beans_logs")
+}
+
+// ===== 画布任务级资金账本（hold）=====
+// 画布执行是"顶层预扣 → SSE 流 → 结束退差额"两个独立事务，中间进程崩溃会让预扣的钱蒸发。
+// 预扣时建一条 hold 记账；所有结束路径把 hold 结算对平；惰性对账扫描遗留的 OPEN hold 兜底退款。
+model BillingHold {
+  id             String   @id @default(cuid())
+  userId         String
+  // 预扣时从谁的钱包扣的（企业团队共享池）；null = 自付。
+  // 退款（僵死对账 / 差额退回）必须退给同一个账号，否则会把钱退错人。
+  billingOwnerId String?  @map("billing_owner_id")
+  runId          String // 关联 CanvasRun.id
+  points         Float    @default(0) // 预扣积分（预算池）
+  beans          Float    @default(0) // 预扣豆
+  status         String   @default("OPEN") // OPEN / SETTLED
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([userId, status])
+  @@map("billing_holds")
+}
+
+model CardKey {
+  id           String        @id @default(cuid())
+  code         String        @unique
+  type         CardKeyType
+  pointsValue  Float?
+  beansValue   Float? // 豆卡密面值
+  durationDays Int?
+  /// 订阅卡密附带的免费无限生图天数（可选）
+  freeImageDays Int? @map("free_image_days")
+  status       CardKeyStatus @default(UNUSED)
+  usedByUserId String?
+  usedAt       DateTime?
+  createdAt    DateTime      @default(now())
+  expiresAt    DateTime?
+
+  usedBy User? @relation(fields: [usedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([usedByUserId])
+  @@map("card_keys")
+}
+
+// 业务编号由服务端生成并先落库再调用上游，用于超时恢复和防重复处理。
+// 购买入口状态不等于支付成功，支付结果以 /access 权益查询为准。
+// 未知/处理中用原 idempotency_key 查询 /consumption 恢复，不换号重扣。
+// ===== 邀请机制 =====
+model InviteRelation {
+  id         String   @id @default(cuid())
+  inviterId  String
+  inviteeId  String   @unique
+  inviteCode String
+  status     String   @default("ACTIVE") // ACTIVE / DISABLED
+  createdAt  DateTime @default(now())
+
+  inviter User           @relation("Inviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee User           @relation("Invitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+  rewards InviteReward[]
+
+  @@index([inviterId])
+  @@map("invite_relations")
+}
+
+model InviteReward {
+  id                   String    @id @default(cuid())
+  relationId           String
+  orderId              String    @unique
+  inviteeId            String
+  inviterId            String
+  paidAmountCents      Int
+  rewardPoints         Float
+  requiredUsagePercent Int       @default(60)
+  usagePercent         Int       @default(0)
+  status               String    @default("PENDING") // PENDING / QUALIFIED / PAID / CANCELED / CLAWBACK
+  eligibleAt           DateTime?
+  paidAt               DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  relation InviteRelation @relation(fields: [relationId], references: [id], onDelete: Cascade)
+
+  @@index([inviterId, status])
+  @@index([inviteeId])
+  @@map("invite_rewards")
+}
+
+// 邀请返利策略（单例，id 固定 primary）：后台可调，保证"返利 + 成本"不亏本
+model InvitePolicy {
+  id                   String   @id @default("primary")
+  enabled              Boolean  @default(true) // 总开关
+  rewardPercent        Int      @default(10) // 返利比例：按订单积分/豆的百分比
+  requiredUsagePercent Int      @default(60) // 达标门槛：被邀请人累计消耗需达到累计购买的百分比
+  minPaidCents         Int      @default(100) // 最低充值门槛（分），低于此金额不产生返利
+  updatedAt            DateTime @updatedAt
+
+  @@map("invite_policies")
+}
+
+// ===== 企业团队（共享余额池）=====
+//
+// 只做「谁付费」这一件事：成员自己的账号、数据、历史产出全部保留，
+// 只是消费时从 owner 的余额扣。不做组织级数据隔离（那是另一个量级的改动，
+// 且当前没有这个需求 —— 用户要的是「老板付费，员工各自用自己的账号干活」）。
+model Team {
+  id                  String    @id @default(cuid())
+  name                String
+  ownerId             String    @unique // 一个 owner 一个团队（简化模型；多团队是后续需求）
+  /**
+   * 审核状态：PENDING（待管理员审核）/ APPROVED / REJECTED。
+   */
+  /**
+   * /**
+   * /** 企业团队 = 让一个账号为其他账号付费，是**资金权力**。不审就等于任何注册
+   */
+  /**
+   * /**
+   * /** 用户都能把自己变成「让别人花我钱」的中转，平台分不清真实企业还是代充通道。
+   */
+  /**
+   * /**
+   * /** ⚠️ 必须在扣费解析层（resolveBillingOwner）强制生效，不能只拦 UI —— 否则
+   */
+  /**
+   * /**
+   * /** 「先加成员、后被驳回」的团队仍会继续扣老板的钱。
+   */
+  status              String    @default("PENDING")
+  /**
+   * 审核备注（驳回原因 / 通过说明），回显给申请人
+   */
+  reviewNote          String?   @map("review_note")
+  reviewedBy          String?   @map("reviewed_by")
+  reviewedAt          DateTime? @map("reviewed_at")
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  /**
+   * 团队默认的成员每日积分上限（0 = 不限）。
+   * 成员未单独设置 teamDailyLimit 时用它；防止单个成员烧光整池。
+   */
+  defaultDailyLimit   Float     @default(0) @map("default_daily_limit")
+  /**
+   * 成员每日可用的豆上限（0 = 不限）。豆比积分贵（视频专用），单独管
+   */
+  defaultDailyBeans   Float     @default(0) @map("default_daily_beans")
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@map("teams")
+}
+
+model ProviderAdapter {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  code        String   @unique
+  description String?
+  type        String   @default("TYPESCRIPT")
+  source      String
+  isBuiltin   Boolean  @default(false) @map("is_builtin")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  providers ApiProvider[]
+
+  @@map("provider_adapters")
+}
+
+model ApiProvider {
+  id           String   @id @default(cuid())
+  name         String
+  code         String   @unique
+  baseUrl      String
+  apiKey       String?
+  configSchema Json?    @map("config_schema")
+  adapterId    String?  @map("adapter_id")
+  configJson   Json?    @map("config_json")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  models  ModelConfig[]
+  adapter ProviderAdapter? @relation(fields: [adapterId], references: [id], onDelete: SetNull)
+
+  @@index([adapterId])
+  @@map("api_providers")
+}
+
+model ModelConfig {
+  id                     String      @id @default(cuid())
+  name                   String
+  modelName              String      @default("")
+  type                   ModelType
+  pricingType            PricingType
+  costPoints             Float
+  videoCost              Float? // 视频模型豆价（豆：视频专用额度）
+  discount               Float? // 促销折扣率 0~1（0.8=八折）；null=无折扣
+  // 折扣时间窗（限时活动等限时活动价）：两个都空 = 永久生效（向后兼容旧数据）；
+  // 配置了窗口则窗口外计费与展示自动回落原价，到点无需人工改回。
+  discountStartsAt       DateTime? @map("discount_starts_at")
+  discountEndsAt         DateTime? @map("discount_ends_at")
+  isFree                 Boolean     @default(false) // 促销免费：扣 0 积分
+  // ===== 全平台每日免费额度 =====
+  // 命中免费额度时该次调用不扣积分/豆。两级额度同时生效、每日 0 点（本地日）重置：
+  // dailyUserFreeQuota：每用户每天可用次数；dailyPlatformFreeQuota：该模型全平台每天总次数上限。
+  dailyUserFreeQuota     Int? // null/0 = 不参与免费额度
+  dailyPlatformFreeQuota Int? // null/0 = 平台侧不限额（仅受每用户额度约束）
+  isActive               Boolean     @default(true)
+  // ===== 是否对外展示（价格页 / 模型列表）=====
+  // 为什么需要独立于 isActive：isActive 是**技术可用性**（能不能跑），
+  // 而这个字段是**产品可见性**（要不要让用户看见）。
+  // 两者语义完全不同：mock-* 测试模型、内部灰度模型、上游已废弃但仍可调通的模型
+  // 都是 isActive=true，但对用户展示它们只会让人不知道该选哪个。
+  // 反过来也成立：一个模型可以「暂不展示（等灰度）」但内部链路仍在跑。
+  isPublic               Boolean     @default(true) @map("is_public")
+  providerId             String
+  supportsVision         Boolean     @default(false) @map("supports_vision")
+  contextWindow          Int?
+  metadata               Json?
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+
+  provider        ApiProvider             @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  usageLogs       ApiUsageLog[]
+  imageRecords    ImageGenerationRecord[]
+  videoRecords    VideoGenerationRecord[]
+  audioRecords    AudioGenerationRecord[]
+  freeQuotaUsages ModelFreeQuotaUsage[]
+  agentConfig     AgentConfig?
+  agentPrefImage  AgentPreference[]       @relation("AgentPrefImage")
+  agentPrefVideo  AgentPreference[]       @relation("AgentPrefVideo")
+  agentPrefAudio  AgentPreference[]       @relation("AgentPrefAudio")
+
+  @@index([providerId])
+  @@map("model_configs")
+}
+
+// 模型每日免费额度用量：按（模型 + 用户 + 自然日）累计。
+// 平台总额度 = 该模型当日所有用户用量之和；每用户额度 = 该行 count。
+// 每日 0 点（本地日）自然重置：新的一天 day 变化即从 0 开始，无需定时任务。
+model ModelFreeQuotaUsage {
+  id        String   @id @default(cuid())
+  modelId   String   @map("model_id")
+  userId    String   @map("user_id")
+  day       String // YYYY-MM-DD（本地日）
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  model ModelConfig @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([modelId, userId, day])
+  @@index([modelId, day])
+  @@map("model_free_quota_usages")
+}
+
+model Agent {
+  id             String   @id @default(cuid())
+  name           String
+  avatar         String?
+  description    String?
+  systemPrompt   String   @map("system_prompt")
+  defaultModelId String?
+  isOfficial     Boolean  @default(false) @map("is_official")
+  creatorId      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  creator User? @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+
+  @@index([creatorId])
+  @@index([isOfficial])
+  @@map("agents")
+}
+
+model CanvasNodeSpec {
+  id          String   @id @default(cuid())
+  nodeType    String   @map("node_type")
+  label       String
+  codeSchema  String   @map("code_schema")
+  description String   @default("")
+  category    String   @default("custom")
+  inputs      Json
+  outputs     Json
+  isOfficial  Boolean  @default(false) @map("is_official")
+  isDisabled  Boolean  @default(false) @map("is_disabled")
+  creatorId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  creator User? @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+
+  @@index([creatorId])
+  @@index([isOfficial])
+  @@map("canvas_node_specs")
+}
+
+model CanvasWorkflow {
+  id          String   @id @default(cuid())
+  name        String
+  nodes       Json
+  connections Json
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("canvas_workflows")
+}
+
+// ===== 电商 Agent 工具会话（路线二 · 独立代码工具）=====
+//
+// 为什么单独建表而不是塞进 canvas_runs：
+//   canvas_runs 是「一次节点执行」的记录（nodes / seedOutputs / status），
+//   而电商 Agent 的状态要跨**多次请求**保存并演进：
+//   analyzing → analyzed → copywriting → ready → generating → completed
+//   中间要留：分析结果 JSON、文案 JSON、提示词数组、每张图的独立任务与进度。
+//   硬塞进 canvas_runs.nodes 会变成第二份畸形真相（正是 workflow 封存的毛病）。
+//
+// 图片资产不存路径（会随 user_assets 的 2h TTL 过期），只存 URL；
+// 前端每次进来要校验存活（isLocalAssetAlive），过期则提示重传。
+// 每张图一个任务（独立进度 / 独立失败 / 独立重试）
+model ApiUsageLog {
+  id             String   @id @default(cuid())
+  userId         String
+  modelId        String
+  tokensUsed     Int?
+  pointsDeducted Float
+  /**
+   * 本次调用扣掉的**视频豆**（豆与积分是两套币种）。
+   * 为什么必须单独一列：视频模型 costPoints=0、按豆计费，此前只有 pointsDeducted
+   * 一列 → 视频调用在调用记录/运维面板里永远显示「扣除 0」，用户与管理员
+   * 都看不出实际扣了多少豆（生产实测 video 3 条全 0，而 beans_logs 里真扣了 45/80/225）。
+   */
+  beansDeducted  Float    @default(0)
+  statusCode     Int?
+  errorMessage   String?
+  /**
+   * 本次调用耗时（毫秒）：模型状态监测的真实延迟来源（此前只能靠相邻调用间隔估算）
+   */
+  durationMs     Int?
+  /**
+   * 调用来源（tool / canvas / copilot / agent / api），便于按入口排查
+   */
+  source         String?
+  /**
+   * 节点/步骤名（如「第3格」「细节特写」），让调用记录能对应到具体是哪一步
+   */
+  nodeLabel      String?
+  /**
+   * 请求详情（脱敏后的 JSON 字符串：模型、提示词、尺寸、参数等）
+   */
+  requestJson    String?
+  /**
+   * 返回详情（脱敏后的 JSON 字符串：图片 URL / 文本 / 错误体等）
+   */
+  responseJson   String?
+  /**
+   * 产物模态（结构化字段，写入时确定，不再靠前端从 responseJson 猜）。
+   * 'image' | 'video' | 'audio' | 'text'；null = 未识别/失败无产物。
+   * 与 media-kinds 注册表同口径：文本模型 → 'text'，媒体模型 → 对应模态。
+   */
+  outputKind     String?
+  /**
+   * 上游异步任务 ID（任务型调用的核心标识）。
+   * 为什么必须有这一列：任务型调用（生图/生视频/生音频）的产物不是当次 HTTP 响应给的，
+   * 而是「提交拿到 taskId → 之后轮询该 taskId 取结果」。此前 taskId 只活在
+   * VideoGenerationRecord.meta 里，调用日志完全看不到 —— 后台想按任务排查
+   * （像 New API 的「任务日志」那样看 提交时间/任务ID/状态/进度）就没有依据。
+   */
+  taskId         String?
+  /**
+   * 任务型调用的进度描述（如「排队中 2/4」「生成中」），轮询时回填
+   */
+  taskProgress   String?
+  /**
+   * 所属执行任务（CanvasRun.id）。
+   * 为什么需要：以前「这次调用是哪次任务跑的」只能靠 nodeLabel 猜，同一工具跑两次就分不清。
+   * 有了 runId 就能从任务反查全部调用、或从一次调用跳到它的整条链路。
+   * 直接调上游（无任务上下文，如 API 转售）时为 null。
+   */
+  runId          String?
+  createdAt      DateTime @default(now())
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model ModelConfig @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([modelId])
+  @@index([createdAt])
+  @@index([runId])
+  @@map("api_usage_logs")
+}
+
+model ImageGenerationRecord {
+  id             String   @id @default(cuid())
+  userId         String
+  modelId        String
+  prompt         String
+  negativePrompt String?  @map("negative_prompt")
+  width          Int?
+  height         Int?
+  imageUrl       String   @map("image_url")
+  costPoints     Float    @map("cost_points")
+  status         String   @default("SUCCESS") // PENDING, SUCCESS, FAILED
+  errorMessage   String?  @map("error_message")
+  expiresAt      DateTime @map("expires_at")
+  createdAt      DateTime @default(now())
+  /**
+   * 所属执行任务（CanvasRun.id）：把生成记录挂到具体某次运行，刷新后可据此恢复
+   */
+  runId          String?
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model ModelConfig @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([modelId])
+  @@index([expiresAt])
+  @@index([runId])
+  @@map("image_generation_records")
+}
+
+model VideoGenerationRecord {
+  id           String   @id @default(cuid())
+  userId       String
+  modelId      String
+  prompt       String
+  videoUrl     String?  @map("video_url")
+  costPoints   Float    @map("cost_points")
+  beansCost    Float?   @map("beans_cost") // 豆价（豆：视频专用额度）
+  status       String   @default("PENDING") // PENDING, SUCCESS, FAILED
+  errorMessage String?  @map("error_message")
+  meta         Json? // { taskId, pollPath, width, height, duration, firstFrame, lastFrame }
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now())
+  /**
+   * 所属执行任务（CanvasRun.id）：把生成记录挂到具体某次运行，刷新后可据此恢复
+   */
+  runId        String?
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model ModelConfig @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([modelId])
+  @@index([expiresAt])
+  @@index([runId])
+  @@map("video_generation_records")
+}
+
+model AudioGenerationRecord {
+  id           String   @id @default(cuid())
+  userId       String
+  modelId      String
+  prompt       String
+  audioUrl     String?  @map("audio_url")
+  costPoints   Float    @map("cost_points")
+  status       String   @default("PENDING") // PENDING, SUCCESS, FAILED
+  errorMessage String?  @map("error_message")
+  meta         Json? // { taskId, pollPath, lyrics, voiceId, durationMs, ... }
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now())
+  /**
+   * 所属执行任务（CanvasRun.id）：把生成记录挂到具体某次运行，刷新后可据此恢复
+   */
+  runId        String?
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model ModelConfig @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([modelId])
+  @@index([expiresAt])
+  @@index([runId])
+  @@map("audio_generation_records")
+}
+
+// 邮箱验证码
+model EmailVerification {
+  id        String   @id @default(cuid())
+  email     String
+  code      String
+  type      String   @default("register") // register / reset_password
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@map("email_verifications")
+}
+
+// SMTP 发件配置(单条记录,key 固定为 primary)
+model SmtpConfig {
+  id          String   @id @default("primary")
+  host        String
+  port        Int
+  username    String
+  password    String
+  senderEmail String   @map("sender_email")
+  senderName  String   @map("sender_name")
+  updatedAt   DateTime @updatedAt
+
+  @@map("smtp_configs")
+}
+
+// 支付渠道开关（单条记录，key 固定为 primary）。
+// 验证码策略(单条记录,key 固定为 primary)
+model VerificationPolicy {
+  id                String   @id @default("primary")
+  codeExpiryMinutes Int      @default(10) @map("code_expiry_minutes")
+  resendCooldownSec Int      @default(60) @map("resend_cooldown_sec")
+  updatedAt         DateTime @updatedAt
+
+  @@map("verification_policies")
+}
+
+// Agent 全局配置（单条记录,key 固定为 primary）：规划模型锁定等
+model AgentConfig {
+  id                     String   @id @default("primary")
+  planningModelId        String?  @unique @map("planning_model_id")
+  // 规划模型「替补链」：主模型（planningModelId）失败/超时后，按这里的顺序依次降级。
+  // 存 ModelConfig.id 的 JSON 数组（有序）。为空 = 退回旧行为（其余启用模型按 isFree/createdAt 排）。
+  // 用 Json 而非关系表：这是一条**有序短列表**（通常 1~4 个），不需要独立查询/外键级联。
+  planningBackupModelIds Json?    @map("planning_backup_model_ids")
+  updatedAt              DateTime @updatedAt
+
+  planningModel ModelConfig? @relation(fields: [planningModelId], references: [id], onDelete: SetNull)
+
+  @@map("agent_configs")
+}
+
+// 管理员人工核验操作日志
+model AdminActionLog {
+  id        String   @id @default(cuid())
+  adminId   String   @map("admin_id")
+  userId    String   @map("user_id")
+  action    String // manual_verify
+  note      String?
+  createdAt DateTime @default(now())
+
+  admin User @relation("AdminActions", fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("admin_action_logs")
+}
+
+// IP 注册频率限制
+model RateLimit {
+  id        String   @id @default(cuid())
+  ip        String
+  action    String // register / send_code
+  count     Int      @default(1)
+  windowAt  DateTime @map("window_at") // 时间窗口起始
+  createdAt DateTime @default(now())
+
+  @@unique([ip, action, windowAt])
+  @@index([ip, action])
+  @@map("rate_limits")
+}
+
+model SystemAnnouncement {
+  id          String    @id @default(cuid())
+  title       String
+  content     String
+  type        String    @default("general") // general=常规 / featured=精选
+  isActive    Boolean   @default(true)
+  // 上线时间：null=立即上线；非 null 时未到时间不对外展示
+  publishedAt DateTime?
+  // 下线时间：null=不过期；非 null 时到期后不再对外展示（活动公告自动收摊）
+  endsAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("system_announcements")
+}
+
+
+// ===== P10: 企业 AI 使用情况调研 =====
+// 一次调研 = 一张问卷（问题树 JSON）。模板按 audience 发放：
+//   ALL  = 全站用户可见
+//   TEAM = 只对某企业的 owner + 成员可见（每企业可定制差异题）
+// 回答一人一卷（userId + templateId 唯一）：重复提交走 upsert 覆盖，
+// 因为问卷是逐题作答的树形结构，改答案重新提交应整体替换而非追加。
+model SurveyTemplate {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  // 问题树：数组，每项 { id, section, title, type: single|multi|text, options?, required?, showIf?: {qid: value} }
+  // showIf 是「父题选了某选项才显示」的分支条件，与前端逐题渲染引擎共用同一份 schema。
+  questions   Json
+  audience    String   @default("ALL") // ALL / TEAM
+  targetTeamId String? @map("target_team_id") // audience=TEAM 时生效；null 表示已按 team 下发（记录最后一次目标）
+  isActive    Boolean  @default(true)
+  // 答完奖励：>0 时管理员可一键给所有已提交者发积分（一次性，rewardGrantedAt 防重发）
+  rewardPoints Float    @default(0) @map("reward_points")
+  rewardGrantedAt DateTime? @map("reward_granted_at")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  responses   SurveyResponse[]
+  @@map("survey_templates")
+}
+
+model SurveyResponse {
+  id         String   @id @default(cuid())
+  templateId String   @map("template_id")
+  userId     String   @map("user_id")
+  // {qid: answer}，answer 为 string（单选/文本）或 string[]（多选）
+  answers    Json
+  submittedAt DateTime @map("submitted_at")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  template SurveyTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  user     User           @relation("SurveyResponses", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, userId])
+  @@index([userId])
+  @@map("survey_responses")
+}
+
+// ===== P9: 作品广场/分享 =====
+model SharedWork {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  description String   @default("")
+  type        String   @default("workflow") // workflow / image / video
+  category    String? // 作品分类（继承发布来源工具的分类，或用户手选）
+  nodes       Json? // 发布时快照
+  connections Json?
+  coverUrl    String?
+  images      Json? // 套图：发布时画布产出的全部图片 URL 数组（coverUrl=其中最后生成的，套图排版用）
+  coverLayout Json? // 套图自定义排版：{ ratio: string, cells: [{url, x, y, w, h}] }（发布弹窗排版编辑器生成，作品广场按此渲染）
+  status      String   @default("PENDING") // PENDING / APPROVED / REJECTED
+  featured    Boolean  @default(false) // 首页精选展示（管理员勾选）
+  authorId    String
+  likeCount   Int      @default(0)
+  viewCount   Int      @default(0)
+  version     Int      @default(1)
+  embedding   String? // 语义搜索向量(JSON 数组)，供 embedding 相似度检索
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@map("shared_works")
+}
+
+// ===== MCP：画布接入配对码（明文码仅生成时返回一次，DB 只存 sha256） =====
+model McpPairing {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String    @default("MCP 接入") // 用户自定义备注（如"Claude Code 笔记本"）
+  codeHash   String    @unique // sha256(mkp_...明文码)
+  codeTail   String    @default("") // 明文码尾 4 位，列表展示用
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+  lastUsedIp String?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("mcp_pairings")
+}
+
+// ===== 工具系统：画布工作流复存为可重复执行的工具 =====
+model Tool {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  coverUrl    String?
+  category    String? // 电商商拍 / 角色设计 / 智能修图 / 视频生成 …
+  tags        String?
+  isOfficial  Boolean  @default(false)
+  status      String   @default("PENDING") // PENDING / APPROVED / REJECTED
+  workflow    Json // { nodes, connections } 画布快照（与 canvas 执行协议同构）
+  slots       Json // Slot[] 面板控件清单（tool-slots.ts 识别引擎生成，作者向导微调）
+  forkedFrom  String? // remix 溯源（源工具 id）
+  useCount    Int      @default(0)
+  likeCount   Int      @default(0)
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, category])
+  @@index([authorId])
+  @@map("tools")
+}
