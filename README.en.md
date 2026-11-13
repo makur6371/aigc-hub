@@ -19,6 +19,19 @@
 - **Canvas and tools:** connect nodes, run workflows, and save, import, or export them.
 - **Results and administration:** track jobs, recover results, manage assets, configure models and quotas, and inspect usage.
 
+## Homepage preview
+
+![AIGC Hub homepage with its creation bar, canvas, and toolbox links](docs/assets/home-preview.webp)
+
+<details>
+<summary>View the typing animation</summary>
+
+![Example prompts are typed and erased](docs/assets/home-typing.gif)
+
+The creation bar cycles through example prompts and opens the workspace when selected.
+
+</details>
+
 ## Run the local demo
 
 Install Node.js 24 and npm, then run:
