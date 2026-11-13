@@ -12,6 +12,8 @@
 
 **Bring your own models to a self-hosted AI creation workspace.** Create and edit images, generate video, chat with an agent, and build reusable node workflows. The default installation has no configured model providers.
 
+**Signature UI: taro purple × liquid glass.**
+
 [简体中文](README.md) · [Deployment guide (中文)](docs/deploy.md) · [Contributing (中文)](CONTRIBUTING.md)
 
 - **Create:** prompt-to-image, reference image editing, and video generation. Video settings follow the selected model's capabilities.
@@ -21,7 +23,9 @@
 
 ## Homepage preview
 
-![AIGC Hub homepage with its creation bar, canvas, and toolbox links](docs/assets/home-preview.webp)
+Soft taro purple, translucent panels, subtle highlights, and generous rounding carry the same visual style from the homepage creation bar to the workspace composer.
+
+![AIGC Hub homepage in taro purple with a translucent liquid-glass creation bar](docs/assets/home-preview.webp)
 
 <details>
 <summary>View the typing animation</summary>

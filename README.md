@@ -12,6 +12,8 @@
 
 **用自己的模型，搭一个 AI 创作工作台。** AIGC Hub 把图像生成与编辑、视频、Agent 和节点画布放在同一个地方。项目默认没有供应商账号或模型，个人和团队可以按需接入自己的服务。
 
+**界面特色：芋泥紫 × 液态玻璃。**
+
 [English](README.en.md) · [部署指南](docs/deploy.md) · [参与贡献](CONTRIBUTING.md)
 
 | 工作区 | 可以做什么 |
@@ -23,7 +25,9 @@
 
 ## 首页预览
 
-![AIGC Hub 浅紫色首页，包含创作胶囊、画布和工具箱入口](docs/assets/home-preview.webp)
+柔和的芋泥紫打底，半透明面板配上细描边、柔光和大圆角。从首页的创作胶囊到工作台底部的操作面板，延续同一套视觉风格。
+
+![AIGC Hub 芋泥紫首页，中间是带液态玻璃效果的创作胶囊](docs/assets/home-preview.webp)
 
 <details>
 <summary>查看创作胶囊的打字动画</summary>
