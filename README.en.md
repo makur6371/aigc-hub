@@ -32,6 +32,12 @@ The creation bar cycles through example prompts and opens the workspace when sel
 
 </details>
 
+### Creation workspace
+
+![AIGC Hub image workspace with a results panel, preview area, and bottom composer](docs/assets/create-workspace.webp)
+
+Browse results on the left, preview and edit in the center, and configure generation or add references in the bottom composer.
+
 ## Run the local demo
 
 Install Node.js 24 and npm, then run:
