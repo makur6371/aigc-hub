@@ -1,0 +1,23 @@
+name: Bug 报告
+description: 报告可复现的问题
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 版本与运行环境
+      description: 提交号、Node.js 版本、操作系统或 Docker。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 优先使用本地演示模型；请先移除密钥、素材与隐私信息。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
