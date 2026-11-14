@@ -46,6 +46,8 @@
 
 ### WebGL 玻璃演示
 
+**[打开在线 WebGL 演示](https://makur6371.github.io/aigc-hub/)** · 无需登录或安装。
+
 ![芋泥紫光环与半透明液态玻璃面板](docs/assets/webgl-glass-preview.webp)
 
 本地启动后，从首页点「玻璃演示」，或打开 [`/demo/glass`](http://localhost:3000/demo/glass)。无需登录。可暂停动画；设备不支持 WebGL 时会显示静态画面。[查看组件源码](src/components/auth/ShaderBackground.tsx)

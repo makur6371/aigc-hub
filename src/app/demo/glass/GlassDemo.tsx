@@ -1,19 +1,18 @@
 'use client'
 
-import { useState } from 'react'
-import Link from 'next/link'
-import { ArrowLeft, ArrowUpRight, Pause, Play } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { ArrowUpRight, Pause, Play } from 'lucide-react'
 import { ShaderBackground, type ShaderStatus } from '@/components/auth/ShaderBackground'
 import styles from './glass.module.css'
 
-export function GlassDemo() {
+export function GlassDemo({ homeLink }: { homeLink: ReactNode }) {
   const [enabled, setEnabled] = useState(true)
   const [status, setStatus] = useState<ShaderStatus | 'loading'>('loading')
   const running = status === 'ready' && enabled
 
   return <main className={styles.page}>
     <header className={styles.header}>
-      <Link href="/" className={styles.back}><ArrowLeft size={16} aria-hidden="true" /> AIGC Hub</Link>
+      <div className={styles.back}>{homeLink}</div>
       <span>DESIGN LAB / 01</span>
     </header>
     <section className={styles.stage} aria-labelledby="glass-title">

@@ -13,7 +13,7 @@
   margin: 0 auto 18px;
 }
 .header > span, .kicker { color: #674585; font: 650 .75rem/1.4 ui-monospace, monospace; letter-spacing: .12em; }
-.back, .source { display: inline-flex; align-items: center; gap: 7px; text-decoration: none; color: #593580; font-weight: 650; }
+.back a, .source { display: inline-flex; align-items: center; gap: 7px; text-decoration: none; color: #593580; font-weight: 650; }
 .stage {
   position: relative;
   isolation: isolate;
@@ -80,7 +80,7 @@
 .card h1 span { color: #74439e; }
 .copy { max-width: 22em; margin: 22px 0 24px; color: #59446c; line-height: 1.7; }
 .source { font-size: .9rem; }
-.back:hover, .source:hover { text-decoration: underline; text-underline-offset: 4px; }
+.back a:hover, .source:hover { text-decoration: underline; text-underline-offset: 4px; }
 .controls {
   position: absolute;
   left: clamp(14px, 3vw, 33px);

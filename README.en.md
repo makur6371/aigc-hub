@@ -44,6 +44,8 @@ Browse results on the left, preview and edit in the center, and configure genera
 
 ### WebGL glass demo
 
+**[Open the live WebGL demo](https://makur6371.github.io/aigc-hub/)** · No sign-in or installation required.
+
 ![Taro-purple rings behind a translucent glass panel](docs/assets/webgl-glass-preview.webp)
 
 After starting the app, open the glass demo from the homepage or visit [`/demo/glass`](http://localhost:3000/demo/glass). No sign-in is needed. Motion can be paused, and browsers without WebGL see a static fallback. [View the component source](src/components/auth/ShaderBackground.tsx).

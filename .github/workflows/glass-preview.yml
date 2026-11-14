@@ -1,0 +1,51 @@
+name: WebGL Preview
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/glass-preview.yml'
+      - 'scripts/build-glass-preview.mjs'
+      - 'scripts/glass-preview/**'
+      - 'src/app/demo/glass/**'
+      - 'src/components/auth/ShaderBackground.tsx'
+      - 'public/logo.svg'
+      - 'package*.json'
+      - 'tsconfig.json'
+      - LICENSE
+      - NOTICE
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: glass-preview-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:glass-preview
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: out/glass-preview
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy static preview
+        id: deployment
+        uses: actions/deploy-pages@v4
