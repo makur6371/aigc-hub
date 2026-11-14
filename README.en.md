@@ -44,7 +44,7 @@ Browse results on the left, preview and edit in the center, and configure genera
 
 ### WebGL glass demo
 
-**[Open the live WebGL demo](https://makur6371.github.io/aigc-hub/)** · No sign-in or installation required.
+**[See the production sign-in page](https://aigc.makur.top/login)** · Preview the same WebGL effect in the real interface without signing in. The [standalone WebGL demo](https://makur6371.github.io/aigc-hub/) offers playback controls and a source link.
 
 ![Taro-purple rings behind a translucent glass panel](docs/assets/webgl-glass-preview.webp)
 

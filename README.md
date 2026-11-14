@@ -46,7 +46,7 @@
 
 ### WebGL 玻璃演示
 
-**[打开在线 WebGL 演示](https://makur6371.github.io/aigc-hub/)** · 无需登录或安装。
+**[体验生产站登录页](https://aigc.makur.top/login)** · 看同款 WebGL 动效在真实界面中的应用，无需登录。另有 [独立 WebGL Demo](https://makur6371.github.io/aigc-hub/)，可暂停动画、查看源码。
 
 ![芋泥紫光环与半透明液态玻璃面板](docs/assets/webgl-glass-preview.webp)
 
