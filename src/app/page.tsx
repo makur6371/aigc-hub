@@ -19,6 +19,7 @@ export default function HomePage() {
         </Link>
         <nav aria-label="站点导航">
           <a href="https://github.com/makur6371/aigc-hub">GitHub <ArrowUpRight size={14} aria-hidden="true" /></a>
+          <Link href="/demo/glass">玻璃演示</Link>
           <Link href="/login">登录</Link>
         </nav>
       </header>

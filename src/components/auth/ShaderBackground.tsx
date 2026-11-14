@@ -45,9 +45,9 @@ vec3 calcNormal(vec3 p){
 
 void main(){
   vec2 uv = (gl_FragCoord.xy - 0.5*uRes)/uRes.y;
-  vec2 m = (uMouse - 0.5) * 0.6;
+  vec2 m = (uMouse - 0.5) * 0.22;
 
-  vec3 ro = vec3(0.0, 0.0, -4.2);
+  vec3 ro = vec3(0.0, 0.0, -6.4);
   vec3 rd = normalize(vec3(uv + m, 1.6));
 
   float t = 0.0;
@@ -69,19 +69,20 @@ void main(){
     vec3 ld = normalize(vec3(0.6, 0.8, -0.5));
     float diff = max(dot(n, ld), 0.0);
     float fres = pow(1.0 - max(dot(-rd, n), 0.0), 2.5);
-    vec3 base = mix(vec3(0.18, 0.27, 0.85), vec3(0.42, 0.17, 0.79), n.y*0.5+0.5);
-    col = base * (0.25 + diff*0.8) + vec3(0.13, 0.83, 0.93)*fres*0.6;
+    vec3 base = mix(vec3(0.43, 0.27, 0.86), vec3(0.73, 0.43, 0.94), n.y*0.5+0.5);
+    col = base * (0.25 + diff*0.8) + vec3(0.88, 0.68, 1.0)*fres*0.75;
   }
 
   col += vec3(0.16, 0.27, 0.85)*glow*0.5 + vec3(0.42, 0.17, 0.79)*glow*0.3;
 
-  float vig = smoothstep(1.3, 0.3, length(uv));
+  float vig = 1.0 - smoothstep(0.3, 1.3, length(uv));
   col *= 0.35 + vig*0.65;
 
   col = col / (col + 0.6);
   col = pow(col, vec3(0.85));
 
-  gl_FragColor = vec4(col, 1.0);
+  float alpha = d < 0.001 ? 1.0 : clamp(glow * 0.7, 0.0, 0.42);
+  gl_FragColor = vec4(col, alpha);
 }
 `
 
@@ -90,148 +91,154 @@ attribute vec2 aPos;
 void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }
 `
 
-/**
- * 全屏 WebGL 着色器背景：固定定位、铺满视口，位于所有内容之下。
- * 三环 raymarch 的光晕会透过右侧半透明面板隐约可见。
- */
-export function ShaderBackground({ onUnsupported }: { onUnsupported?: () => void }) {
+export type ShaderStatus = 'ready' | 'reduced' | 'unavailable'
+
+export function ShaderBackground({ className, playing = true, onStatus }: {
+  className?: string
+  playing?: boolean
+  onStatus?: (status: ShaderStatus) => void
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const mouseRef = useRef<[number, number]>([0.5, 0.5])
+  const setPlayback = useRef<(value: boolean) => void>(() => {})
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
-    const gl = canvas.getContext('webgl', { antialias: true, alpha: false })
-    // Gate 1: WebGL unavailable → degrade to minimal.
+    const stage = canvas?.parentElement
+    if (!canvas || !stage) return
+    const gl = canvas.getContext('webgl', { alpha: true, antialias: false, premultipliedAlpha: false })
     if (!gl) {
-      onUnsupported?.()
+      onStatus?.('unavailable')
       return
     }
-
-    // 编译 shader,带错误检查(失败→降级)
-    const compile = (type: number, src: string): WebGLShader | null => {
-      const s = gl.createShader(type)!
-      gl.shaderSource(s, src)
-      gl.compileShader(s)
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-        console.warn('[ShaderBackground] shader compile failed:', gl.getShaderInfoLog(s))
-        return null
-      }
-      return s
+    const compile = (type: number, source: string) => {
+      const shader = gl.createShader(type)
+      if (!shader) return null
+      gl.shaderSource(shader, source)
+      gl.compileShader(shader)
+      if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return shader
+      gl.deleteShader(shader)
+      return null
     }
-    const vs = compile(gl.VERTEX_SHADER, VERT_SHADER)
-    const fs = compile(gl.FRAGMENT_SHADER, FRAG_SHADER)
-    if (!vs || !fs) {
-      onUnsupported?.()
+    const vert = compile(gl.VERTEX_SHADER, VERT_SHADER)
+    const frag = compile(gl.FRAGMENT_SHADER, FRAG_SHADER)
+    const program = gl.createProgram()
+    const buffer = gl.createBuffer()
+    const release = () => {
+      if (vert) gl.deleteShader(vert)
+      if (frag) gl.deleteShader(frag)
+      if (program) gl.deleteProgram(program)
+      if (buffer) gl.deleteBuffer(buffer)
+    }
+    if (vert && frag && program && buffer) {
+      gl.attachShader(program, vert)
+      gl.attachShader(program, frag)
+      gl.linkProgram(program)
+    }
+    if (!vert || !frag || !program || !buffer || !gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      release()
+      onStatus?.('unavailable')
       return
     }
-
-    const prog = gl.createProgram()!
-    gl.attachShader(prog, vs)
-    gl.attachShader(prog, fs)
-    gl.linkProgram(prog)
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      console.warn('[ShaderBackground] program link failed:', gl.getProgramInfoLog(prog))
-      onUnsupported?.()
-      return
-    }
-    gl.useProgram(prog)
-
-    const buf = gl.createBuffer()
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf)
+    gl.useProgram(program)
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
-    const loc = gl.getAttribLocation(prog, 'aPos')
-    gl.enableVertexAttribArray(loc)
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
-
-    const uRes = gl.getUniformLocation(prog, 'uRes')
-    const uTime = gl.getUniformLocation(prog, 'uTime')
-    const uMouse = gl.getUniformLocation(prog, 'uMouse')
-
-    let resize: (() => void) | null = null
-    let onMove: ((e: MouseEvent) => void) | null = null
-    let onContextLost: ((e: Event) => void) | null = null
+    const position = gl.getAttribLocation(program, 'aPos')
+    gl.enableVertexAttribArray(position)
+    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
+    const resolution = gl.getUniformLocation(program, 'uRes')
+    const time = gl.getUniformLocation(program, 'uTime')
+    const mouse = gl.getUniformLocation(program, 'uMouse')
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const pointer = [0.5, 0.5]
+    let playingNow = false
+    let failed = false
     let raf = 0
-    let disposed = false
+    let lastFrame = 0
+    let elapsed = 3.5
 
-    const dispose = () => {
-      if (disposed) return
-      disposed = true
-      cancelAnimationFrame(raf)
-      if (resize) window.removeEventListener('resize', resize)
-      if (onMove) window.removeEventListener('mousemove', onMove)
-      if (onContextLost) canvas.removeEventListener('webglcontextlost', onContextLost)
-    }
-
-    resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.75)
-      const w = window.innerWidth * dpr
-      const h = window.innerHeight * dpr
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w
-        canvas.height = h
-      }
-      gl.viewport(0, 0, canvas.width, canvas.height)
-    }
-    resize()
-    window.addEventListener('resize', resize)
-
-    onMove = (e: MouseEvent) => {
-      mouseRef.current = [e.clientX / window.innerWidth, 1 - e.clientY / window.innerHeight]
-    }
-    window.addEventListener('mousemove', onMove)
-
-    // Gate 2: context lost → 清理监听器 + 降级
-    onContextLost = (e: Event) => {
-      e.preventDefault()
-      dispose()
-      onUnsupported?.()
-    }
-    canvas.addEventListener('webglcontextlost', onContextLost)
-
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const start = performance.now()
-
-    // Gate 3: framerate probe — 采样前 2s,平均 FPS < 30 → 降级
-    let frames = 0
-    const probeStart = performance.now()
-    const PROBE_MS = 2000
-    const MIN_FPS = 30
-    let probed = false
-
-    const render = () => {
-      if (disposed) return
-      const now = performance.now()
-      const time = reduced ? 0 : (now - start) / 1000
-      gl.uniform2f(uRes, canvas.width, canvas.height)
-      gl.uniform1f(uTime, time)
-      gl.uniform2f(uMouse, mouseRef.current[0], mouseRef.current[1])
+    const draw = () => {
+      if (failed || document.hidden || !canvas.width || !canvas.height) return
+      gl.uniform2f(resolution, canvas.width, canvas.height)
+      gl.uniform1f(time, elapsed)
+      gl.uniform2f(mouse, pointer[0], pointer[1])
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
-
-      if (!reduced && !probed) {
-        frames++
-        if (now - probeStart >= PROBE_MS) {
-          probed = true
-          const fps = (frames * 1000) / (now - probeStart)
-          if (fps < MIN_FPS) {
-            dispose()
-            onUnsupported?.()
-            return
-          }
-        }
-      }
-      raf = requestAnimationFrame(render)
     }
-    render()
+    const animate = (now: number) => {
+      if (lastFrame === 0) lastFrame = now - 1000 / 30
+      if (now - lastFrame >= 1000 / 32) {
+        elapsed += Math.min(now - lastFrame, 50) / 1000
+        lastFrame = now
+        draw()
+      }
+      raf = requestAnimationFrame(animate)
+    }
+    const sync = () => {
+      cancelAnimationFrame(raf)
+      lastFrame = 0
+      if (document.hidden || failed) return
+      if (!playingNow || reducedMotion.matches) {
+        draw()
+        return
+      }
+      raf = requestAnimationFrame(animate)
+    }
+    const resize = () => {
+      const { width, height } = canvas.getBoundingClientRect()
+      if (!width || !height || failed) return
+      const scale = Math.min(1, 640 / Math.max(width, height))
+      canvas.width = Math.max(1, Math.round(width * scale))
+      canvas.height = Math.max(1, Math.round(height * scale))
+      gl.viewport(0, 0, canvas.width, canvas.height)
+      draw()
+    }
+    const onPointer = (event: PointerEvent) => {
+      if (!playingNow || reducedMotion.matches || event.pointerType === 'touch') return
+      const bounds = stage.getBoundingClientRect()
+      pointer[0] = (event.clientX - bounds.left) / bounds.width
+      pointer[1] = 1 - (event.clientY - bounds.top) / bounds.height
+    }
+    const onPreference = () => {
+      if (failed) return
+      if (reducedMotion.matches) {
+        pointer[0] = pointer[1] = 0.5
+        draw()
+      }
+      onStatus?.(reducedMotion.matches ? 'reduced' : 'ready')
+      sync()
+    }
+    const onLost = () => {
+      failed = true
+      sync()
+      onStatus?.('unavailable')
+    }
 
-    return dispose
-  }, [onUnsupported])
+    const observer = new ResizeObserver(resize)
+    observer.observe(canvas)
+    resize()
+    stage.addEventListener('pointermove', onPointer)
+    reducedMotion.addEventListener('change', onPreference)
+    document.addEventListener('visibilitychange', sync)
+    canvas.addEventListener('webglcontextlost', onLost)
+    onPreference()
+    setPlayback.current = (value) => {
+      playingNow = value
+      sync()
+    }
+    return () => {
+      setPlayback.current = () => {}
+      cancelAnimationFrame(raf)
+      observer.disconnect()
+      stage.removeEventListener('pointermove', onPointer)
+      reducedMotion.removeEventListener('change', onPreference)
+      document.removeEventListener('visibilitychange', sync)
+      canvas.removeEventListener('webglcontextlost', onLost)
+      release()
+    }
+  }, [onStatus])
 
-  return (
-    <canvas
-      ref={canvasRef}
-      className="pointer-events-none fixed inset-0 h-full w-full"
-      style={{ zIndex: 0 }}
-    />
-  )
+  useEffect(() => {
+    setPlayback.current(playing)
+  }, [playing, onStatus])
+
+  return <canvas ref={canvasRef} className={className} aria-hidden="true" />
 }

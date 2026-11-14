@@ -44,6 +44,12 @@
 
 左侧查看成果，中间预览和编辑，底部切换创作方式、添加参考素材和设置生成参数。
 
+### WebGL 玻璃演示
+
+![芋泥紫光环与半透明液态玻璃面板](docs/assets/webgl-glass-preview.webp)
+
+本地启动后，从首页点「玻璃演示」，或打开 [`/demo/glass`](http://localhost:3000/demo/glass)。无需登录。可暂停动画；设备不支持 WebGL 时会显示静态画面。[查看组件源码](src/components/auth/ShaderBackground.tsx)
+
 ## 快速体验
 
 演示无需 API Key。需要 Node.js 24 和 npm。安装依赖并准备配置：

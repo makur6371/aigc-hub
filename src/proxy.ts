@@ -4,7 +4,7 @@ import { verifyToken, verifyAdmin } from '@/lib/auth'
 import { getPrisma } from '@/lib/prisma'
 import { LOW_BLOCKED_PREFIXES, hitsAny } from '@/lib/api-policy'
 
-const PUBLIC_PATHS = ['/', '/login', '/faq', '/model-pricing', '/gallery', '/tools', '/create', '/api/auth/login', '/api/auth/logout']
+const PUBLIC_PATHS = ['/', '/demo/glass', '/login', '/faq', '/model-pricing', '/gallery', '/tools', '/create', '/api/auth/login', '/api/auth/logout']
 // 公开作品 / 提示词详情、公开只读 API：GET 放行
 // /api/mcp 自验 Bearer 配对码（route 内查库），不走会话闸门
 // /api/tool-cover/ 是工具封面（平台展示资产，公网可读）——工具箱列表是公开页，未登录也要能看图
@@ -12,7 +12,7 @@ const PUBLIC_PATHS = ['/', '/login', '/faq', '/model-pricing', '/gallery', '/too
 // 它只做「把公网图片拉回来并缓存」这一件事，任何人都能用（工具箱列表/作品广场的封面本来就公开）。
 // 之前漏了它 → 未登录/会话过期时返回 401 → 前端代理链路整条失效、静默回落直连重下，
 // 表现就是「成果区已经显示出来了，点进工作台还要再等一次」。
-const PUBLIC_PREFIXES = ['/_next/', '/favicon.ico', '/logo', '/placeholder.png', '/demo/', '/api/demo/', '/generated/', '/api/asset/', '/api/tool-cover/', '/api/cover', '/gallery/', '/api/mcp']
+const PUBLIC_PREFIXES = ['/_next/', '/favicon.ico', '/logo', '/placeholder.png', '/demo/preview.mp4', '/demo/preview.png', '/api/demo/', '/generated/', '/api/asset/', '/api/tool-cover/', '/api/cover', '/gallery/', '/api/mcp']
 // 匿名可读的公开数据 API（GET，不写不敏感）：首页下滑区缺认可见作品/提示词、顶部公告横幅
 const PUBLIC_READ_PREFIXES = ['/api/works', '/api/prompts', '/api/announcements', '/api/tools', '/api/models']
 
